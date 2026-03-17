@@ -28,7 +28,7 @@ import aiohttp
 import aiohttp.web
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING, IndexModel
-from pyrogram import Client, filters, enums
+from pyrogram import Client, filters, enums, idle
 from pyrogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -1476,7 +1476,7 @@ async def main():
     asyncio.create_task(self_ping_task(),    name="self_ping")
 
     logger.info("✅ All systems go — bot is ready to serve!")
-    await asyncio.Event().wait()  # run forever
+    await idle()  # drives Pyrogram update loop until SIGINT/SIGTERM
 
 
 if __name__ == "__main__":
