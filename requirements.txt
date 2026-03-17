@@ -1,4 +1,6 @@
-pyrogram==2.0.106
+# pyrofork is a maintained pyrogram fork compatible with Python 3.12/3.13/3.14
+# It installs under the "pyrogram" namespace — zero code changes needed.
+pyrofork==2.3.17
 TgCrypto==1.2.5
 motor==3.4.0
 pymongo==4.7.3
