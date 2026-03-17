@@ -10,6 +10,20 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+# ── Python 3.10+ compatibility fix ────────────────────────────────
+# asyncio.get_event_loop() raises RuntimeError in 3.10+ when there is
+# no running loop on the current thread.  Pyrogram's sync.py calls it
+# at import time, so we must create + set the loop BEFORE importing
+# pyrogram.  This is safe and has no effect on async operation.
+try:
+    _loop = asyncio.get_event_loop()
+    if _loop.is_closed():
+        raise RuntimeError("closed")
+except RuntimeError:
+    _loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_loop)
+# ──────────────────────────────────────────────────────────────────
+
 import aiohttp
 import aiohttp.web
 from motor.motor_asyncio import AsyncIOMotorClient
