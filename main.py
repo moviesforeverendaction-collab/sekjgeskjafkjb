@@ -10,19 +10,22 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-# ── Python 3.10+ / 3.14 event-loop fix (must run BEFORE pyrogram import) ──
-# pyrogram/kurigram's sync.py calls asyncio.get_event_loop() at module level.
-# On Python 3.10+ there is no implicit loop on the main thread → RuntimeError.
-# We create one explicitly so the import succeeds.
-import asyncio as _asyncio
-try:
-    _existing = _asyncio.get_event_loop()
-    if _existing.is_closed():
-        raise RuntimeError
-except RuntimeError:
-    _loop = _asyncio.new_event_loop()
-    _asyncio.set_event_loop(_loop)
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+# SINGLE-LOOP BOOTSTRAP  (Python 3.10 – 3.14 compatible)
+# ══════════════════════════════════════════════════════════════════
+# Root cause of "attached to a different loop":
+#   asyncio.run() ALWAYS creates a brand-new event loop.
+#   If we also pre-created a loop for pyrogram's import-time
+#   get_event_loop() call, pyrogram binds its futures/tasks to
+#   that old loop while asyncio.run() executes on a new one.
+#
+# Solution: create ONE loop right here, set it as the current loop,
+#   import pyrogram (which captures this loop), and later run
+#   main() on this SAME loop via loop.run_until_complete().
+#   Never call asyncio.run() — it would replace the loop.
+# ══════════════════════════════════════════════════════════════════
+_MAIN_LOOP = asyncio.new_event_loop()
+asyncio.set_event_loop(_MAIN_LOOP)
 
 import aiohttp
 import aiohttp.web
@@ -1491,4 +1494,11 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Use the SAME loop that pyrogram captured at import time.
+    # asyncio.run() would create a NEW loop → "attached to a different loop".
+    try:
+        _MAIN_LOOP.run_until_complete(main())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _MAIN_LOOP.close()
