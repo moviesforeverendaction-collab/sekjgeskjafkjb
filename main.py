@@ -10,25 +10,25 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-# ── Python 3.10+ compatibility fix ────────────────────────────────
-# asyncio.get_event_loop() raises RuntimeError in 3.10+ when there is
-# no running loop on the current thread.  Pyrogram's sync.py calls it
-# at import time, so we must create + set the loop BEFORE importing
-# pyrogram.  This is safe and has no effect on async operation.
+# ── Python 3.10+ / 3.14 event-loop fix (must run BEFORE pyrogram import) ──
+# pyrogram/kurigram's sync.py calls asyncio.get_event_loop() at module level.
+# On Python 3.10+ there is no implicit loop on the main thread → RuntimeError.
+# We create one explicitly so the import succeeds.
+import asyncio as _asyncio
 try:
-    _loop = asyncio.get_event_loop()
-    if _loop.is_closed():
-        raise RuntimeError("closed")
+    _existing = _asyncio.get_event_loop()
+    if _existing.is_closed():
+        raise RuntimeError
 except RuntimeError:
-    _loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(_loop)
-# ──────────────────────────────────────────────────────────────────
+    _loop = _asyncio.new_event_loop()
+    _asyncio.set_event_loop(_loop)
+# ──────────────────────────────────────────────────────────────────────────────
 
 import aiohttp
 import aiohttp.web
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING, IndexModel
-from pyrogram import Client, filters, enums, idle
+from pyrogram import Client, filters, enums
 from pyrogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -57,10 +57,10 @@ BOT_TOKEN        = os.environ["BOT_TOKEN"]
 API_ID           = int(os.environ["API_ID"])
 API_HASH         = os.environ["API_HASH"]
 MONGO_URI        = os.environ["MONGO_URI"]
-MONGO_NAME       = os.getenv("MONGO_NAME",            "tempmail_bot")
-OWNER_ID         = int(os.getenv("OWNER_ID",          "0"))
-PORT             = int(os.getenv("PORT",               "10000"))
-RENDER_URL       = os.getenv("RENDER_EXTERNAL_URL",   "").rstrip("/")
+MONGO_NAME       = os.getenv("MONGO_NAME",             "tempmail_bot")
+OWNER_ID         = int(os.getenv("OWNER_ID",           "0"))   # optional
+PORT             = int(os.getenv("PORT",                "10000"))
+RENDER_URL       = os.getenv("RENDER_EXTERNAL_URL",    "").rstrip("/")
 
 EMAIL_TTL        = int(os.getenv("EMAIL_TTL_MINUTES",   "60"))
 MAX_EMAILS       = int(os.getenv("MAX_EMAILS_PER_USER", "5"))
@@ -1445,38 +1445,49 @@ async def start_web_server():
 async def main():
     logger.info("╔══════════════════════════════════════════════╗")
     logger.info("║  ULTRA ADVANCED TEMP MAIL BOT  v3.0         ║")
-    logger.info("║  Pyrogram · Motor · aiohttp · Render-Ready  ║")
+    logger.info("║  Kurigram · Motor · aiohttp · Render-Ready  ║")
     logger.info("╚══════════════════════════════════════════════╝")
 
+    # Setup DB indexes
     await setup_indexes()
+
+    # Start web server (binds PORT for Render)
     await start_web_server()
-    await app.start()
-    me = await app.get_me()
-    logger.info(f"✅ @{me.username} (id={me.id}) is online!")
-    logger.info(f"🗄  MongoDB: {MONGO_NAME}")
-    logger.info(f"🌐 Port: {PORT}  |  Render: {RENDER_URL or 'not set'}")
 
-    if OWNER_ID:
-        try:
-            await app.send_message(
-                OWNER_ID,
-                f"🚀 <b>Bot started!  v{BOT_VERSION}</b>\n\n"
-                f"🤖 @{me.username}\n"
-                f"🗄 DB: <code>{MONGO_NAME}</code>\n"
-                f"🌐 Port: <code>{PORT}</code>\n"
-                f"🔌 Providers: <code>{len(ALL_APIS)}</code>",
-                parse_mode=enums.ParseMode.HTML,
-            )
-        except Exception:
-            pass
+    # ── Use `async with app` so kurigram's dispatcher is FULLY active ──
+    # This is the only guaranteed way — app.start() alone does NOT wire
+    # the update dispatcher on some kurigram/pyrofork builds.
+    async with app:
+        me = await app.get_me()
+        logger.info(f"✅ @{me.username} (id={me.id}) is online!")
+        logger.info(f"🗄  MongoDB  : {MONGO_NAME}")
+        logger.info(f"🌐 Port     : {PORT}  |  Render: {RENDER_URL or 'not set'}")
 
-    # Launch background tasks
-    asyncio.create_task(cleanup_task(),      name="cleanup")
-    asyncio.create_task(inbox_notify_task(), name="inbox_notify")
-    asyncio.create_task(self_ping_task(),    name="self_ping")
+        # Notify owner if configured
+        if OWNER_ID:
+            try:
+                await app.send_message(
+                    OWNER_ID,
+                    f"🚀 <b>Bot started!  v{BOT_VERSION}</b>\n\n"
+                    f"🤖 @{me.username}\n"
+                    f"🗄 DB: <code>{MONGO_NAME}</code>\n"
+                    f"🌐 Port: <code>{PORT}</code>\n"
+                    f"🔌 Providers: <code>{len(ALL_APIS)}</code>",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+            except Exception:
+                pass
 
-    logger.info("✅ All systems go — bot is ready to serve!")
-    await idle()  # drives Pyrogram update loop until SIGINT/SIGTERM
+        # Launch background tasks (inside the async-with so they share the loop)
+        asyncio.create_task(cleanup_task(),      name="cleanup")
+        asyncio.create_task(inbox_notify_task(), name="inbox_notify")
+        asyncio.create_task(self_ping_task(),    name="self_ping")
+
+        logger.info("✅ All systems go — bot is ready and responding!")
+
+        # Keep the coroutine alive until process is killed (SIGTERM from Render)
+        stop_event = asyncio.Event()
+        await stop_event.wait()
 
 
 if __name__ == "__main__":
