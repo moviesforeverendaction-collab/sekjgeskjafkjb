@@ -1,7 +1,7 @@
-# pyrofork is a maintained pyrogram fork compatible with Python 3.12/3.13/3.14
-# It installs under the "pyrogram" namespace — zero code changes needed.
-pyrofork==2.3.17
-TgCrypto==1.2.5
+# kurigram — actively maintained pyrogram fork, Python 3.12/3.13/3.14 ready
+# Installs under the "pyrogram" namespace — zero import changes needed.
+kurigram
+TgCrypto
 motor==3.4.0
 pymongo==4.7.3
 aiohttp==3.9.5
