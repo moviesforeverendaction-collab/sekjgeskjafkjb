@@ -2,7 +2,7 @@
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║        ULTRA ADVANCED TELEGRAM TEMP MAIL BOT v3.0              ║
 # ║   Pyrogram · Motor/MongoDB · aiohttp · Render-Ready            ║
-# ║   10 Providers · Live Notifications · Admin Panel · Cache      ║
+# ║ Verified Providers · Live Notifications · Admin Panel · Cache  ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 import os, asyncio, logging, hashlib, random, string, time, re, html
@@ -160,84 +160,56 @@ def _rnd(n: int = 10) -> str:
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=n))
 
 # ══════════════════════════════════════════════════════════════════
-# API PROVIDER #1 — 1secmail
+# PROVIDERS VERIFIED LIVE ON 2026-03-17
 # ══════════════════════════════════════════════════════════════════
-class OneSec(TempMailAPI):
-    name = "1secmail"; icon = "⚡"
-    BASE = "https://www.1secmail.com/api/v1/"
-    DOMAINS = ["1secmail.com","1secmail.org","1secmail.net","esiix.com","wwjmp.com"]
-
-    async def generate_email(self) -> Optional[str]:
-        try:
-            self.total_generated += 1
-            return f"{_rnd()}@{random.choice(self.DOMAINS)}"
-        except Exception as e:
-            logger.error(f"[{self.name}] gen: {e}"); return None
-
-    async def get_messages(self, email: str) -> list[dict]:
-        try:
-            local, domain = email.split("@")
-            s = await get_session()
-            async with s.get(f"{self.BASE}?action=getMessages&login={local}&domain={domain}") as r:
-                msgs = await r.json(content_type=None)
-            result = []
-            for m in (msgs or [])[:10]:
-                async with s.get(f"{self.BASE}?action=readMessage&login={local}&domain={domain}&id={m['id']}") as dr:
-                    d = await dr.json(content_type=None)
-                result.append(self._norm(d.get("from",""), d.get("subject",""),
-                                         d.get("textBody", d.get("htmlBody","")), d.get("date","")))
-            return result
-        except Exception as e:
-            logger.error(f"[{self.name}] inbox: {e}"); return []
+# Verified with live outbound checks on March 17, 2026:
+#   • mail.gw        → account creation + inbox fetch
+#   • maildrop.cc    → GraphQL inbox queries
+#   • guerrillamail  → session API
+#   • dropmail.me    → GraphQL session API
+# ══════════════════════════════════════════════════════════════════
+async def _graphql_json(url: str, query: str,
+                        variables: Optional[dict] = None) -> Optional[dict]:
+    payload = {"query": query}
+    if variables is not None:
+        payload["variables"] = variables
+    s = await get_session()
+    async with s.post(
+        url,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+    ) as r:
+        if r.status != 200:
+            return None
+        return await r.json(content_type=None)
 
 # ══════════════════════════════════════════════════════════════════
-# API PROVIDER #2 — Guerrilla Mail
+# PROVIDER #1 — mail.gw  (Hydra REST API)
+# Docs: https://mail.gw
 # ══════════════════════════════════════════════════════════════════
-class Guerrilla(TempMailAPI):
-    name = "guerrilla"; icon = "🥷"
-    BASE = "https://api.guerrillamail.com/ajax.php"
+class MailGW(TempMailAPI):
+    name = "mail.gw"; icon = "🛸"
+    BASE = "https://api.mail.gw"
 
-    async def generate_email(self) -> Optional[str]:
-        try:
-            s = await get_session()
-            async with s.get(self.BASE, params={"f": "get_email_address"}) as r:
-                d = await r.json(content_type=None)
-            addr = d.get("email_addr")
-            if addr: self.total_generated += 1
-            return addr
-        except Exception as e:
-            logger.error(f"[{self.name}] gen: {e}"); return None
-
-    async def get_messages(self, email: str) -> list[dict]:
-        try:
-            s = await get_session()
-            async with s.get(self.BASE, params={"f":"get_email_list","offset":0,
-                                                 "alias":email.split("@")[0]}) as r:
-                d = await r.json(content_type=None)
-            return [self._norm(m.get("mail_from",""), m.get("mail_subject",""),
-                               m.get("mail_excerpt",""), m.get("mail_date",""))
-                    for m in d.get("list", [])]
-        except Exception as e:
-            logger.error(f"[{self.name}] inbox: {e}"); return []
-
-# ══════════════════════════════════════════════════════════════════
-# API PROVIDER #3 — mail.tm
-# ══════════════════════════════════════════════════════════════════
-class MailTM(TempMailAPI):
-    name = "mail.tm"; icon = "🌐"
-    BASE = "https://api.mail.tm"
+    async def _get_domain(self, s) -> Optional[str]:
+        async with s.get(f"{self.BASE}/domains?page=1") as r:
+            if r.status != 200: return None
+            d = await r.json(content_type=None)
+        doms = d.get("hydra:member", [])
+        return doms[0]["domain"] if doms else None
 
     async def generate_email(self) -> Optional[str]:
         try:
             s = await get_session()
-            async with s.get(f"{self.BASE}/domains") as r:
-                dd = await r.json(content_type=None)
-            doms = dd.get("hydra:member", [])
-            if not doms: return None
-            domain = doms[0]["domain"]
-            pw = "Tmp#" + _rnd(8)
-            addr = f"{_rnd()}@{domain}"
-            async with s.post(f"{self.BASE}/accounts", json={"address": addr, "password": pw}) as r:
+            domain = await self._get_domain(s)
+            if not domain: return None
+            addr = f"{_rnd(10)}@{domain}"
+            pw   = "Tmp#" + _rnd(8) + "2B"
+            async with s.post(
+                f"{self.BASE}/accounts",
+                json={"address": addr, "password": pw}
+            ) as r:
+                if r.status not in (200, 201): return None
                 acc = await r.json(content_type=None)
             result = acc.get("address")
             if result:
@@ -252,191 +224,200 @@ class MailTM(TempMailAPI):
             if "|" not in email: return []
             addr, pw = email.split("|", 1)
             s = await get_session()
-            async with s.post(f"{self.BASE}/token", json={"address": addr, "password": pw}) as r:
+            async with s.post(
+                f"{self.BASE}/token", json={"address": addr, "password": pw}
+            ) as r:
+                if r.status != 200: return []
                 td = await r.json(content_type=None)
-            tok = td.get("token")
+            tok  = td.get("token")
             if not tok: return []
             hdrs = {"Authorization": f"Bearer {tok}"}
-            async with s.get(f"{self.BASE}/messages", headers=hdrs) as r:
+            async with s.get(f"{self.BASE}/messages?page=1", headers=hdrs) as r:
+                if r.status != 200: return []
                 md = await r.json(content_type=None)
             result = []
             for m in md.get("hydra:member", [])[:10]:
-                async with s.get(f"{self.BASE}/messages/{m['id']}", headers=hdrs) as dr:
+                async with s.get(
+                    f"{self.BASE}/messages/{m['id']}", headers=hdrs
+                ) as dr:
+                    if dr.status != 200: continue
                     d = await dr.json(content_type=None)
-                result.append(self._norm(d.get("from", {}).get("address", ""),
-                                         d.get("subject",""), d.get("text", d.get("html","")),
-                                         d.get("createdAt","")))
+                result.append(self._norm(
+                    d.get("from", {}).get("address", ""),
+                    d.get("subject", ""),
+                    d.get("text") or d.get("html", ""),
+                    d.get("createdAt", ""),
+                ))
             return result
         except Exception as e:
             logger.error(f"[{self.name}] inbox: {e}"); return []
 
 # ══════════════════════════════════════════════════════════════════
-# API PROVIDER #4 — TempMail.Plus
+# PROVIDER #2 — maildrop.cc  (current GraphQL inbox API)
+# Docs: https://docs.maildrop.cc/graphql
 # ══════════════════════════════════════════════════════════════════
-class TempMailPlus(TempMailAPI):
-    name = "tempmail.plus"; icon = "➕"
-    BASE = "https://tempmail.plus/api"
-    DOMAINS = ["tempmail.plus", "fakemail.net", "mailtemp.info"]
+class Maildrop(TempMailAPI):
+    name = "maildrop"; icon = "💧"
+    DOMAIN = "maildrop.cc"
+    BASE   = "https://api.maildrop.cc/graphql"
 
     async def generate_email(self) -> Optional[str]:
         self.total_generated += 1
-        return f"{_rnd()}@{random.choice(self.DOMAINS)}"
+        return f"{_rnd(10)}@{self.DOMAIN}"
 
     async def get_messages(self, email: str) -> list[dict]:
         try:
+            alias = email.split("@")[0].lower()
+            inbox_data = await _graphql_json(
+                self.BASE,
+                """
+                query($mailbox: String!) {
+                  inbox(mailbox: $mailbox) {
+                    id
+                    headerfrom
+                    subject
+                    date
+                  }
+                }
+                """,
+                {"mailbox": alias},
+            )
+            msgs = (((inbox_data or {}).get("data") or {}).get("inbox")) or []
+            result = []
+            for m in msgs[:10]:
+                mid = m.get("id", "")
+                detail = await _graphql_json(
+                    self.BASE,
+                    """
+                    query($mailbox: String!, $id: String!) {
+                      message(mailbox: $mailbox, id: $id) {
+                        txt
+                        html
+                      }
+                    }
+                    """,
+                    {"mailbox": alias, "id": mid},
+                )
+                body = ((((detail or {}).get("data") or {}).get("message")) or {})
+                result.append(self._norm(
+                    m.get("headerfrom", ""),
+                    m.get("subject", ""),
+                    body.get("txt") or body.get("html", ""),
+                    m.get("date", ""),
+                ))
+            return result
+        except Exception as e:
+            logger.error(f"[{self.name}] inbox: {e}"); return []
+
+# ══════════════════════════════════════════════════════════════════
+# PROVIDER #3 — Guerrilla Mail  (session-based API)
+# Docs: https://www.guerrillamail.com/GuerrillaMailAPI.html
+# ══════════════════════════════════════════════════════════════════
+class Guerrilla(TempMailAPI):
+    name = "guerrilla"; icon = "🥷"
+    BASE = "https://api.guerrillamail.com/ajax.php"
+
+    async def generate_email(self) -> Optional[str]:
+        try:
             s = await get_session()
-            async with s.get(f"{self.BASE}/mails",
-                             params={"email": email, "limit": 20, "epin": ""}) as r:
+            async with s.get(
+                self.BASE, params={"f": "get_email_address", "lang": "en"}
+            ) as r:
+                if r.status != 200: return None
                 d = await r.json(content_type=None)
-            return [self._norm(m.get("from_mail",""), m.get("subject",""),
-                               m.get("text",""), m.get("date",""))
-                    for m in d.get("mail_list", [])]
+            addr = d.get("email_addr")
+            if addr:
+                self.total_generated += 1
+            return addr
         except Exception as e:
-            logger.error(f"[{self.name}] inbox: {e}"); return []
-
-# ══════════════════════════════════════════════════════════════════
-# API PROVIDER #5 — Dispostable
-# ══════════════════════════════════════════════════════════════════
-class Dispostable(TempMailAPI):
-    name = "dispostable"; icon = "🗂"
-    DOMAIN = "dispostable.com"
-
-    async def generate_email(self) -> Optional[str]:
-        self.total_generated += 1
-        return f"{_rnd()}@{self.DOMAIN}"
+            logger.error(f"[{self.name}] gen: {e}"); return None
 
     async def get_messages(self, email: str) -> list[dict]:
         try:
+            alias = email.split("@")[0]
             s = await get_session()
-            async with s.get("https://www.dispostable.com/api/list-messages/",
-                             params={"username": email.split("@")[0]}) as r:
-                d = await r.json(content_type=None)
-            return [self._norm(m.get("sender",""), m.get("subject",""),
-                               m.get("text",""), m.get("created_at",""))
-                    for m in d.get("messages", [])]
-        except Exception as e:
-            logger.error(f"[{self.name}] inbox: {e}"); return []
-
-# ══════════════════════════════════════════════════════════════════
-# API PROVIDER #6 — Mailnesia
-# ══════════════════════════════════════════════════════════════════
-class Mailnesia(TempMailAPI):
-    name = "mailnesia"; icon = "🗃"
-    DOMAIN = "mailnesia.com"
-
-    async def generate_email(self) -> Optional[str]:
-        self.total_generated += 1
-        return f"{_rnd()}@{self.DOMAIN}"
-
-    async def get_messages(self, email: str) -> list[dict]:
-        try:
-            s = await get_session()
-            async with s.get(f"https://mailnesia.com/mailbox/{email.split('@')[0]}") as r:
-                text = await r.text()
-            subjs = re.findall(r'class="subject"[^>]*>(.*?)</td>', text, re.DOTALL)
-            frms  = re.findall(r'class="from"[^>]*>(.*?)</td>',    text, re.DOTALL)
-            dts   = re.findall(r'class="date"[^>]*>(.*?)</td>',    text, re.DOTALL)
-            def cl(s): return re.sub(r'<[^>]+>', '', s).strip()
-            return [self._norm(cl(frms[i]) if i < len(frms) else "",
-                               cl(subjs[i]), "", cl(dts[i]) if i < len(dts) else "")
-                    for i in range(len(subjs))]
-        except Exception as e:
-            logger.error(f"[{self.name}] inbox: {e}"); return []
-
-# ══════════════════════════════════════════════════════════════════
-# API PROVIDER #7 — YOPmail
-# ══════════════════════════════════════════════════════════════════
-class YOPmail(TempMailAPI):
-    name = "yopmail"; icon = "🔮"
-    DOMAIN = "yopmail.com"
-
-    async def generate_email(self) -> Optional[str]:
-        self.total_generated += 1
-        return f"{_rnd()}@{self.DOMAIN}"
-
-    async def get_messages(self, email: str) -> list[dict]:
-        try:
-            s = await get_session()
-            async with s.get(f"https://yopmail.com/en/inbox?login={email.split('@')[0]}&p=1") as r:
-                text = await r.text()
-            subjs = re.findall(r'class="lms">(.*?)</span>', text)
-            frms  = re.findall(r'class="lmf">(.*?)</span>', text)
-            def cl(s): return re.sub(r'<[^>]+>', '', s).strip()
-            return [self._norm(cl(frms[i]) if i < len(frms) else "",
-                               cl(subjs[i]), "", "")
-                    for i in range(len(subjs))]
-        except Exception as e:
-            logger.error(f"[{self.name}] inbox: {e}"); return []
-
-# ══════════════════════════════════════════════════════════════════
-# API PROVIDER #8 — TrashMail
-# ══════════════════════════════════════════════════════════════════
-class TrashMail(TempMailAPI):
-    name = "trashmail"; icon = "🗑"
-    DOMAIN = "trashmail.at"
-
-    async def generate_email(self) -> Optional[str]:
-        self.total_generated += 1
-        return f"{_rnd()}@{self.DOMAIN}"
-
-    async def get_messages(self, email: str) -> list[dict]:
-        try:
-            s = await get_session()
-            async with s.get(f"https://trashmail.at/api/json/v1/mailbox/{email.split('@')[0]}") as r:
-                data = await r.json(content_type=None)
-            msgs = data if isinstance(data, list) else []
-            return [self._norm(m.get("from",""), m.get("subject",""),
-                               m.get("body",""), m.get("date","")) for m in msgs]
-        except Exception as e:
-            logger.error(f"[{self.name}] inbox: {e}"); return []
-
-# ══════════════════════════════════════════════════════════════════
-# API PROVIDER #9 — FakeMail
-# ══════════════════════════════════════════════════════════════════
-class FakeMail(TempMailAPI):
-    name = "fakemail"; icon = "🎭"
-    DOMAIN = "fakemail.net"
-
-    async def generate_email(self) -> Optional[str]:
-        self.total_generated += 1
-        return f"{_rnd()}@{self.DOMAIN}"
-
-    async def get_messages(self, email: str) -> list[dict]:
-        try:
-            s = await get_session()
-            async with s.get(f"https://www.fakemail.net/{email.split('@')[0]}") as r:
-                text = await r.text()
-            rows = re.findall(r'<tr[^>]*data-mailid[^>]*>(.*?)</tr>', text, re.DOTALL)
-            def g(pat, blob):
-                m = re.search(pat, blob)
-                return re.sub(r'<[^>]+>', '', m.group(1)).strip() if m else ""
-            return [self._norm(g(r'class="from"[^>]*>(.*?)<', row),
-                               g(r'class="subject"[^>]*>(.*?)<', row), "", "")
-                    for row in rows]
-        except Exception as e:
-            logger.error(f"[{self.name}] inbox: {e}"); return []
-
-# ══════════════════════════════════════════════════════════════════
-# API PROVIDER #10 — Tempr.email
-# ══════════════════════════════════════════════════════════════════
-class TemprEmail(TempMailAPI):
-    name = "tempr.email"; icon = "🔥"
-    DOMAINS = ["tempr.email", "discard.email", "spamgourmet.com"]
-
-    async def generate_email(self) -> Optional[str]:
-        self.total_generated += 1
-        return f"{_rnd()}@{random.choice(self.DOMAINS)}"
-
-    async def get_messages(self, email: str) -> list[dict]:
-        try:
-            md5 = hashlib.md5(email.lower().encode()).hexdigest()
-            s = await get_session()
-            async with s.get(f"https://tempr.email/api/v1/mailbox/{md5}") as r:
+            async with s.get(
+                self.BASE,
+                params={"f": "get_email_list", "offset": 0, "alias": alias}
+            ) as r:
                 if r.status != 200: return []
-                data = await r.json(content_type=None)
-            msgs = data if isinstance(data, list) else []
-            return [self._norm(m.get("from",""), m.get("subject",""),
-                               m.get("body",""), m.get("date","")) for m in msgs]
+                d = await r.json(content_type=None)
+            return [
+                self._norm(
+                    m.get("mail_from", ""), m.get("mail_subject", ""),
+                    m.get("mail_excerpt", ""), m.get("mail_date", "")
+                )
+                for m in d.get("list", [])
+            ]
+        except Exception as e:
+            logger.error(f"[{self.name}] inbox: {e}"); return []
+
+# ══════════════════════════════════════════════════════════════════
+# PROVIDER #4 — DropMail  (GraphQL session API)
+# Docs: https://dropmail.me/api
+# ══════════════════════════════════════════════════════════════════
+class DropMail(TempMailAPI):
+    name = "dropmail"; icon = "📨"
+    AUTH_TOKEN = os.getenv("DROPMAIL_TOKEN", "tempmailbotv3")
+    BASE = f"https://dropmail.me/api/graphql/{AUTH_TOKEN}"
+
+    async def generate_email(self) -> Optional[str]:
+        try:
+            data = await _graphql_json(
+                self.BASE,
+                """
+                mutation {
+                  introduceSession {
+                    id
+                    addresses {
+                      address
+                    }
+                  }
+                }
+                """,
+            )
+            session = (((data or {}).get("data") or {}).get("introduceSession")) or {}
+            addr = ((session.get("addresses") or [{}])[0]).get("address")
+            session_id = session.get("id")
+            if addr and session_id:
+                self.total_generated += 1
+                return f"{addr}|{session_id}"
+            return None
+        except Exception as e:
+            logger.error(f"[{self.name}] gen: {e}"); return None
+
+    async def get_messages(self, email: str) -> list[dict]:
+        try:
+            if "|" not in email: return []
+            _addr, session_id = email.split("|", 1)
+            data = await _graphql_json(
+                self.BASE,
+                """
+                query($id: ID!) {
+                  session(id: $id) {
+                    mails {
+                      fromAddr
+                      headerFrom
+                      headerSubject
+                      text
+                      html
+                      receivedAt
+                    }
+                  }
+                }
+                """,
+                {"id": session_id},
+            )
+            mails = ((((data or {}).get("data") or {}).get("session")) or {}).get("mails") or []
+            return [
+                self._norm(
+                    m.get("fromAddr") or m.get("headerFrom", ""),
+                    m.get("headerSubject", ""),
+                    m.get("text") or m.get("html", ""),
+                    m.get("receivedAt", ""),
+                )
+                for m in mails[:10]
+            ]
         except Exception as e:
             logger.error(f"[{self.name}] inbox: {e}"); return []
 
@@ -444,10 +425,13 @@ class TemprEmail(TempMailAPI):
 # API REGISTRY & SMART ROTATION
 # ══════════════════════════════════════════════════════════════════
 ALL_APIS: list[TempMailAPI] = [
-    OneSec(), Guerrilla(), MailTM(), TempMailPlus(), Dispostable(),
-    Mailnesia(), YOPmail(), TrashMail(), FakeMail(), TemprEmail(),
+    MailGW(),      # 🛸 mail.gw      — REST API with auth
+    Maildrop(),    # 💧 maildrop.cc  — GraphQL inbox API
+    Guerrilla(),   # 🥷 guerrilla    — session-based API
+    DropMail(),    # 📨 dropmail.me  — GraphQL session API
 ]
 _API_MAP = {a.name: a for a in ALL_APIS}
+
 
 
 async def generate_with_fallback() -> tuple[Optional[str], Optional[str]]:
@@ -714,7 +698,7 @@ async def safe_edit(msg: Message, text: str,
     try:
         await msg.edit_text(text, reply_markup=kb,
                             parse_mode=enums.ParseMode.HTML,
-                            disable_web_page_preview=True)
+                            )
     except MessageNotModified:
         pass
     except Exception as e:
@@ -739,7 +723,7 @@ async def cmd_start(_, msg: Message):
         f"╔══════════════════════╗\n"
         f"║  🔒 TEMP MAIL BOT v{BOT_VERSION}  ║\n"
         f"╚══════════════════════╝\n\n"
-        f"✨ <b>Instant disposable inboxes</b> from 10 providers.\n"
+        f"✨ <b>Instant disposable inboxes</b> from {len(ALL_APIS)} verified providers.\n"
         f"📬 Active inboxes: <code>{count}/{MAX_EMAILS}</code>\n"
         f"⏳ Auto-expire:   <code>{EMAIL_TTL} min</code>\n"
         f"🔔 New mail → instant notification\n\n"
@@ -761,7 +745,7 @@ def build_help_text() -> str:
     return (
         "📖 <b>HELP &amp; GUIDE</b>\n\n"
         "🚀 <b>Generate Email</b>\n"
-        "   Creates a fresh inbox from one of 10 providers.\n\n"
+        f"   Creates a fresh inbox from one of {len(ALL_APIS)} verified providers.\n\n"
         "📋 <b>My Emails</b>\n"
         "   Manage, pin, mute or delete your inboxes.\n\n"
         "📥 <b>Check Inbox</b>\n"
